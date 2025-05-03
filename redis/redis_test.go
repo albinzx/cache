@@ -8,6 +8,8 @@ import (
 
 	"github.com/albinzx/cache"
 	"github.com/albinzx/cache/internal"
+	"github.com/albinzx/marshal"
+	str "github.com/albinzx/marshal/string"
 	"github.com/go-redis/redismock/v9"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -98,9 +100,9 @@ func TestCacher_Set(t *testing.T) {
 	type args struct {
 		ctx        context.Context
 		key        string
-		value      []byte
+		value      any
 		setOptions []cache.SetOption
-		init       func(string, []byte) (*Cacher, redismock.ClientMock)
+		init       func(string, any) (*Cacher, redismock.ClientMock)
 	}
 	tests := []struct {
 		name    string
@@ -112,9 +114,9 @@ func TestCacher_Set(t *testing.T) {
 			args: args{
 				ctx:        context.Background(),
 				key:        "key",
-				value:      []byte("value"),
+				value:      "value",
 				setOptions: []cache.SetOption{},
-				init: func(key string, value []byte) (*Cacher, redismock.ClientMock) {
+				init: func(key string, value any) (*Cacher, redismock.ClientMock) {
 					client, mock := redismock.NewClientMock()
 					mock.ExpectSet(key, value, 0).SetVal("OK")
 					return &Cacher{
@@ -130,9 +132,9 @@ func TestCacher_Set(t *testing.T) {
 			args: args{
 				ctx:        context.Background(),
 				key:        "key",
-				value:      []byte("value"),
+				value:      "value",
 				setOptions: []cache.SetOption{},
-				init: func(key string, value []byte) (*Cacher, redismock.ClientMock) {
+				init: func(key string, value any) (*Cacher, redismock.ClientMock) {
 					client, mock := redismock.NewClientMock()
 					mock.ExpectSet(key, value, time.Second).SetVal("OK")
 					return &Cacher{
@@ -149,14 +151,35 @@ func TestCacher_Set(t *testing.T) {
 			args: args{
 				ctx:        context.Background(),
 				key:        "key",
-				value:      []byte("value"),
+				value:      "value",
 				setOptions: []cache.SetOption{cache.WithTTL(5 * time.Second)},
-				init: func(key string, value []byte) (*Cacher, redismock.ClientMock) {
+				init: func(key string, value any) (*Cacher, redismock.ClientMock) {
 					client, mock := redismock.NewClientMock()
 					mock.ExpectSet("test."+key, value, 5*time.Second).SetVal("OK")
 					return &Cacher{
 						client: client,
 						prefix: &internal.WithPrefix{Name: "test"},
+					}, mock
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "test set with marshaller",
+			args: args{
+				ctx:        context.Background(),
+				key:        "key",
+				value:      "value",
+				setOptions: []cache.SetOption{},
+				init: func(key string, value any) (*Cacher, redismock.ClientMock) {
+					client, mock := redismock.NewClientMock()
+					marshaller := &str.Marshaller{}
+					marshalledValue, _ := marshaller.Marshal(value)
+					mock.ExpectSet(key, marshalledValue, 0).SetVal("OK")
+					return &Cacher{
+						client:     client,
+						prefix:     &internal.NoPrefix{},
+						marshaller: marshaller,
 					}, mock
 				},
 			},
@@ -185,7 +208,7 @@ func TestCacher_Get(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    []byte
+		want    any
 		wantErr bool
 	}{
 		{
@@ -213,19 +236,44 @@ func TestCacher_Get(t *testing.T) {
 				key: "key",
 				init: func(key string) (*Cacher, redismock.ClientMock) {
 					client, mock := redismock.NewClientMock()
-					mock.ExpectSet(key, []byte("value"), 5*time.Second).SetVal("OK")
+					mock.ExpectSet(key, "value", 5*time.Second).SetVal("OK")
 					mock.ExpectGet(key).SetVal("value")
 					cacher := &Cacher{
 						client: client,
 						ttl:    5 * time.Second,
 						prefix: &internal.NoPrefix{},
 					}
-					cacher.Set(context.Background(), key, []byte("value"))
+					cacher.Set(context.Background(), key, "value")
 
 					return cacher, mock
 				},
 			},
-			want:    []byte("value"),
+			want:    "value",
+			wantErr: false,
+		},
+		{
+			name: "test get with marshaller",
+			args: args{
+				ctx: context.Background(),
+				key: "key",
+				init: func(key string) (*Cacher, redismock.ClientMock) {
+					client, mock := redismock.NewClientMock()
+					marshaller := &str.Marshaller{}
+					marshalledValue, _ := marshaller.Marshal("value")
+					mock.ExpectSet(key, marshalledValue, 5*time.Second).SetVal("OK")
+					mock.ExpectGet(key).SetVal("value")
+					cacher := &Cacher{
+						client:     client,
+						ttl:        5 * time.Second,
+						prefix:     &internal.NoPrefix{},
+						marshaller: marshaller,
+					}
+					cacher.Set(context.Background(), key, "value")
+
+					return cacher, mock
+				},
+			},
+			want:    "value",
 			wantErr: false,
 		},
 	}
@@ -291,7 +339,7 @@ func TestCacher_Delete(t *testing.T) {
 func TestCacher_Load(t *testing.T) {
 	type args struct {
 		ctx  context.Context
-		data map[string][]byte
+		data map[string]any
 		init func() (*Cacher, redismock.ClientMock)
 	}
 	tests := []struct {
@@ -303,14 +351,14 @@ func TestCacher_Load(t *testing.T) {
 			name: "test load with no error",
 			args: args{
 				ctx: context.Background(),
-				data: map[string][]byte{
-					"key1": []byte("value1"),
-					"key2": []byte("value2"),
+				data: map[string]any{
+					"key1": "value1",
+					"key2": "value2",
 				},
 				init: func() (*Cacher, redismock.ClientMock) {
 					client, mock := redismock.NewClientMock()
-					mock.ExpectSet("key1", []byte("value1"), time.Second).SetVal("OK")
-					mock.ExpectSet("key2", []byte("value2"), time.Second).SetVal("OK")
+					mock.ExpectSet("key1", "value1", time.Second).SetVal("OK")
+					mock.ExpectSet("key2", "value2", time.Second).SetVal("OK")
 					return &Cacher{
 						client: client,
 						ttl:    time.Second,
@@ -491,6 +539,33 @@ func TestWithName(t *testing.T) {
 			WithName(tt.args.name)(c)
 			if got := c.prefix; !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("WithName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWithMarshaller(t *testing.T) {
+	type args struct {
+		marshaller marshal.Marshaller
+	}
+	m := &str.Marshaller{}
+	tests := []struct {
+		name    string
+		args    args
+		wantNil bool
+	}{
+		{
+			name:    "test with marshaller",
+			args:    args{marshaller: m},
+			wantNil: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Cacher{}
+			WithMarshaller(tt.args.marshaller)(c)
+			if got := c.marshaller; (got == nil) != tt.wantNil {
+				t.Errorf("WithMarshaller() = %v, want nil %v", got, tt.wantNil)
 			}
 		})
 	}

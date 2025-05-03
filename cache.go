@@ -35,13 +35,13 @@ func WithTTL(ttl time.Duration) SetOption {
 type Cacher interface {
 	io.Closer
 	// Set sets key-value to cache
-	Set(context.Context, string, []byte, ...SetOption) error
+	Set(context.Context, string, any, ...SetOption) error
 	// Get gets value from cache
-	Get(context.Context, string) ([]byte, error)
+	Get(context.Context, string) (any, error)
 	// Delete deletes value from cache
 	Delete(context.Context, string) error
 	// Load loads multiple key-values into cache
-	Load(context.Context, map[string][]byte) error
+	Load(context.Context, map[string]any) error
 }
 
 // Persister defines operation for persistence storage

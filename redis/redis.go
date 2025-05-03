@@ -8,6 +8,7 @@ import (
 
 	"github.com/albinzx/cache"
 	"github.com/albinzx/cache/internal"
+	"github.com/albinzx/marshal"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -16,6 +17,7 @@ type Cacher struct {
 	client      goredis.UniversalClient
 	ttl         time.Duration
 	prefix      internal.KeyPrefix
+	marshaller  marshal.Marshaller
 	closeClient bool
 }
 
@@ -46,32 +48,81 @@ func New(options ...Option) *Cacher {
 	return rcache
 }
 
-func (c *Cacher) Set(ctx context.Context, key string, value []byte, setOptions ...cache.SetOption) error {
+func (c *Cacher) Set(ctx context.Context, key string, value any, setOptions ...cache.SetOption) error {
 	setConfig := &cache.SetConfiguration{
 		TTL: c.ttl}
 	for _, option := range setOptions {
 		option(setConfig)
 	}
 
+	if c.marshaller != nil {
+		// if marshaller is set, marshal value
+		// before storing to redis
+		marshalled, err := c.marshaller.Marshal(value)
+		if err != nil {
+			return err
+		}
+		value = marshalled
+	}
+
 	return c.client.Set(ctx, c.prefix.Prefix(key), value, setConfig.TTL).Err()
 }
 
-func (c *Cacher) Get(ctx context.Context, key string) ([]byte, error) {
+func (c *Cacher) Get(ctx context.Context, key string) (any, error) {
 	value := c.client.Get(ctx, c.prefix.Prefix(key))
 
 	if errors.Is(value.Err(), goredis.Nil) {
 		return nil, nil
 	}
 
-	return value.Bytes()
+	if c.marshaller != nil {
+		// if marshaller is set, unmarshal value
+		marshalled, err := value.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		unmarshalled, err := c.marshaller.Unmarshal(marshalled)
+		if err != nil {
+			return nil, err
+		}
+		return unmarshalled, nil
+	}
+
+	// if marshaller is not set, return value as string
+	return value.Val(), nil
 }
 
 func (c *Cacher) Delete(ctx context.Context, key string) error {
 	return c.client.Del(ctx, c.prefix.Prefix(key)).Err()
 }
 
-func (c *Cacher) Load(ctx context.Context, data map[string][]byte) error {
+func (c *Cacher) Load(ctx context.Context, data map[string]any) error {
 
+	if c.marshaller != nil {
+		// if marshaller is set, marshal all values
+		// before storing to redis
+		bytesMap := make(map[string][]byte, len(data))
+
+		for key, val := range data {
+			marshalled, err := c.marshaller.Marshal(val)
+			if err == nil {
+				bytesMap[key] = marshalled
+			}
+		}
+
+		_, err := c.client.Pipelined(ctx, func(pipe goredis.Pipeliner) error {
+
+			for key, val := range bytesMap {
+				pipe.Set(ctx, c.prefix.Prefix(key), val, c.ttl)
+			}
+
+			return nil
+		})
+
+		return err
+	}
+
+	// if marshaller is not set, store values as is to redis
 	_, err := c.client.Pipelined(ctx, func(pipe goredis.Pipeliner) error {
 
 		for key, val := range data {
@@ -129,5 +180,12 @@ func WithName(name string) Option {
 		}
 
 		cache.prefix = keyPrefix
+	}
+}
+
+// WithMarshaller returns option to set marshaller
+func WithMarshaller(marshaller marshal.Marshaller) Option {
+	return func(cache *Cacher) {
+		cache.marshaller = marshaller
 	}
 }
