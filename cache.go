@@ -65,12 +65,14 @@ type Persister interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// PatternedCache defines caching pattern
 type PatternedCache struct {
 	cacher    Cacher
 	persister Persister
 	pattern   Pattern
 }
 
+// New creates a new cache with the given cacher and persister
 func New(cacher Cacher, persister Persister, options ...Option) (*PatternedCache, error) {
 	if cacher == nil {
 		return nil, ErrCacherNil
