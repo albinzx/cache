@@ -2,8 +2,14 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
+)
+
+var (
+	// ErrCacherNil is returned when cacher is nil
+	ErrCacherNil = errors.New("cacher is nil")
 )
 
 // Cache defines cache operation
@@ -57,4 +63,60 @@ type Persister interface {
 	SelectAll(ctx context.Context) (map[string]any, error)
 	// Delete deletes value by key from persistence storage
 	Delete(ctx context.Context, key string) error
+}
+
+type PatternedCache struct {
+	cacher    Cacher
+	persister Persister
+	pattern   Pattern
+}
+
+func New(cacher Cacher, persister Persister, options ...Option) (*PatternedCache, error) {
+	if cacher == nil {
+		return nil, ErrCacherNil
+	}
+
+	cache := &PatternedCache{
+		cacher:    cacher,
+		persister: persister,
+	}
+
+	for _, option := range options {
+		option(cache)
+	}
+	defaults(cache)
+
+	return cache, nil
+}
+
+// Option provides cache options
+type Option func(c *PatternedCache)
+
+// defaults sets default cache option
+func defaults(c *PatternedCache) {
+	if c.pattern == nil {
+		c.pattern = &CacheAside{}
+	}
+}
+
+// WithPattern returns option to set cache pattern
+func WithPattern(pattern Pattern) Option {
+	return func(c *PatternedCache) {
+		c.pattern = pattern
+	}
+}
+
+// Set sets key-value to cache
+func (c *PatternedCache) Set(ctx context.Context, key string, value any, options ...SetOption) error {
+	return c.pattern.Set(ctx, key, value, c.cacher, c.persister, options...)
+}
+
+// Get retrieves value from cache
+func (c *PatternedCache) Get(ctx context.Context, key string) (any, error) {
+	return c.pattern.Get(ctx, key, c.cacher, c.persister)
+}
+
+// Delete deletes value from cache
+func (c *PatternedCache) Delete(ctx context.Context, key string) error {
+	return c.pattern.Delete(ctx, key, c.cacher, c.persister)
 }
