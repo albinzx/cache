@@ -105,7 +105,9 @@ func (w *WriteThrough) Set(ctx context.Context, key string, value any, c Cacher,
 		if err := p.Save(ctx, key, value); err != nil {
 			log.Printf("failed to save value to persistence storage: %v", err)
 
-			c.Delete(ctx, key)
+			if derr := c.Delete(ctx, key); derr != nil {
+				log.Printf("failed to delete value from cache: %v", derr)
+			}
 
 			return err
 		}
@@ -168,9 +170,11 @@ func (w *WriteBehind) Set(ctx context.Context, key string, value any, c Cacher, 
 	if p != nil {
 		go func() {
 			if err := p.Save(ctx, key, value); err != nil {
-				c.Delete(ctx, key)
-
 				log.Printf("failed to save value to persistence storage: %v", err)
+
+				if derr := c.Delete(ctx, key); derr != nil {
+					log.Printf("failed to delete value from cache: %v", derr)
+				}
 			}
 		}()
 	}
